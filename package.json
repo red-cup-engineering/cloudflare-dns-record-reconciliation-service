@@ -1,0 +1,27 @@
+{
+  "name": "@red-cup-engineering/cloudflare-dns-record-reconciliation-service",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Reconciles one explicitly declared Cloudflare DNS record through a verified named profile.",
+  "license": "MIT",
+  "exports": "./src/reconcile-cloudflare-dns-record.mjs",
+  "bin": {
+    "reconcile-cloudflare-dns-record": "scripts/reconcile-cloudflare-dns-record.mjs"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "node --check src/reconcile-cloudflare-dns-record.mjs && node --check scripts/reconcile-cloudflare-dns-record.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@red-cup-engineering/linux-cloudflare-authentication-service": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false
+}
