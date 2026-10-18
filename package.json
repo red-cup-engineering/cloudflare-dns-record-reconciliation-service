@@ -5,8 +5,7 @@
   "description": "Reconciles one explicitly declared Cloudflare DNS record through a verified named profile.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/red-cup-engineering/computer-web-engineering-services-section.git",
-    "directory": "services/web-platform-services-section/services/cloud-services-section/services/cloudflare-services-section/services/cloudflare-dns-record-reconciliation-service"
+    "url": "git+https://github.com/red-cup-engineering/cloudflare-dns-record-reconciliation-service.git"
   },
   "license": "MIT",
   "exports": "./src/reconcile-cloudflare-dns-record.mjs",
