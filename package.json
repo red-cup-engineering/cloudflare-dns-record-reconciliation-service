@@ -27,5 +27,9 @@
   "engines": {
     "node": ">=22"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "funding": {
+    "type": "individual",
+    "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
+  }
 }
