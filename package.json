@@ -22,7 +22,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@red-cup-engineering/linux-cloudflare-authentication-service": "workspace:*"
+    "@red-cup-engineering/linux-cloudflare-authentication-service": "0.1.1"
   },
   "engines": {
     "node": ">=22"
@@ -33,4 +33,3 @@
     "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   }
 }
-
