@@ -51,6 +51,7 @@ async function cloudflare(fetchImpl, token, path, init = {}) {
   const response = await fetchImpl(`https://api.cloudflare.com/client/v4${path}`, {...init, headers:{authorization:`Bearer ${token}`,...(init.headers ?? {})}});
   const body = await response.json();
   if (!response.ok || body.success !== true) throw new Error(`Cloudflare DNS request refused: ${JSON.stringify(body.errors ?? [])}`);
+  if (path.includes("/dns_records?") && body.result_info?.total_pages > 1) throw new Error("Cloudflare DNS record listing is incomplete across pages");
   return body.result;
 }
 
@@ -95,13 +96,17 @@ export async function reconcileCloudflareDnsRecord(input, options = {}) {
     throw new Error("Cloudflare zone does not belong to the expected account");
   }
   const zoneId = zones[0].id;
-  const records = await cloudflare(fetchImpl, token, `/zones/${zoneId}/dns_records?type=${mapping.type}&name=${encodeURIComponent(mapping.name)}`);
+  const records = await cloudflare(fetchImpl, token, `/zones/${zoneId}/dns_records?name=${encodeURIComponent(mapping.name)}&per_page=100`);
   if (!Array.isArray(records)) throw new Error("Cloudflare DNS record listing is not an array");
   const matches = records.filter((record) => record.type === mapping.type && record.name === mapping.name);
   if (matches.length > 1) throw new Error(`duplicate ${mapping.name} ${mapping.type} records refuse ambiguous mutation`);
   const same = (record) => record.content === mapping.content && record.proxied === mapping.proxied && record.ttl === mapping.ttl;
-  const before = matches.length === 0 ? null : Object.freeze(Object.fromEntries(
-    ["id", "type", "name", "content", "proxied", "ttl"].map((key) => [key, matches[0][key]])));
+  const snapshot = (record) => Object.freeze(Object.fromEntries(
+    ["id", "type", "name", "content", "proxied", "ttl"].map((key) => [key, record[key]])));
+  const before = matches.length === 0 ? null : snapshot(matches[0]);
+  const conflicts = mapping.state === "absent" ? [] : records.filter((record) => record.name === mapping.name && (
+    (mapping.type === "CNAME" && ["A", "AAAA"].includes(record.type)) ||
+    (["A", "AAAA"].includes(mapping.type) && record.type === "CNAME"))).map(snapshot);
   if (Object.hasOwn(input, "expectedRecord")) {
     const expected = input.expectedRecord;
     if ((expected === null) !== (before === null) ||
@@ -111,11 +116,12 @@ export async function reconcileCloudflareDnsRecord(input, options = {}) {
     }
   }
   if (dryRun) {
-    const action = mapping.state === "absent" ? (before ? "remove" : "none") :
+    const action = conflicts.length ? "blocked" : mapping.state === "absent" ? (before ? "remove" : "none") :
       !before ? "create" : same(matches[0]) ? "none" : "update";
     return Object.freeze({type:"CloudflareDnsReconciliationReceipt",disposition:"planned",action,dryRun:true,
-      zoneId,recordId:before?.id ?? null,before,mapping,inspection,credentialReturned:false});
+      zoneId,recordId:before?.id ?? null,before,conflicts,mapping,inspection,credentialReturned:false});
   }
+  if (conflicts.length) throw new Error("Conflicting A/AAAA/CNAME records refuse DNS mutation");
   if (mapping.state === "absent") {
     if (matches.length === 0) return Object.freeze({type:"CloudflareDnsReconciliationReceipt",disposition:"unchanged",zoneId,recordId:null,mapping,inspection,credentialReturned:false});
     await cloudflare(fetchImpl, token, `/zones/${zoneId}/dns_records/${matches[0].id}`, {method:"DELETE"});

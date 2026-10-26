@@ -183,3 +183,43 @@ test("an environment token binds a supplied account before reading or changing r
   } finally { delete process.env[TEST_ENVIRONMENT_VARIABLE]; }
 });
 
+test("plans expose same-name address and CNAME conflicts and apply never removes them", async () => {
+  for (const [mapping, conflicting] of [
+    [input.mapping,{id:"address",...input.mapping,type:"A",content:"192.0.2.1"}],
+    [input.mapping,{id:"address-v6",...input.mapping,type:"AAAA",content:"2001:db8::1"}],
+    [{...input.mapping,type:"A",content:"192.0.2.1"},{id:"alias",...input.mapping}],
+    [{...input.mapping,type:"AAAA",content:"2001:db8::1"},{id:"alias",...input.mapping}]
+  ]) {
+    const transport=fixture([conflicting]);
+    const request={...input,mapping};
+    const receipt=await reconcileCloudflareDnsRecord({...request,dryRun:true},options(transport.fetch));
+    assert.equal(receipt.action,"blocked");
+    assert.equal(receipt.before,null);
+    const {zone,...observed}=conflicting;
+    assert.deepEqual(receipt.conflicts,[observed]);
+    assert.match(transport.calls[1].url,/dns_records\?name=app\.example\.test&per_page=100$/);
+    await assert.rejects(reconcileCloudflareDnsRecord(request,options(transport.fetch)),/Conflicting/);
+    assert.ok(transport.calls.every(call => call.init.method === undefined));
+    const absent=await reconcileCloudflareDnsRecord({...request,dryRun:true,mapping:{...mapping,state:"absent"}},options(fixture([conflicting]).fetch));
+    assert.equal(absent.action,"none");
+    assert.deepEqual(absent.conflicts,[]);
+  }
+  const elsewhere=fixture([{id:"elsewhere",...input.mapping,name:"other.example.test",type:"A",content:"192.0.2.2"}]);
+  const receipt=await reconcileCloudflareDnsRecord({...input,dryRun:true},options(elsewhere.fetch));
+  assert.equal(receipt.action,"create");
+  assert.deepEqual(receipt.conflicts,[]);
+});
+
+test("an incomplete record page cannot authorize a plan or mutation", async () => {
+  for (const dryRun of [true,false]) {
+    const calls=[];
+    const fetch=async(url,init={})=>{
+      calls.push({url,init});
+      return url.endsWith("/zones?name=example.test") ? response([{id:"zone",name:"example.test"}]) :
+        {ok:true,json:async()=>({success:true,result:[],result_info:{total_pages:2}})};
+    };
+    await assert.rejects(reconcileCloudflareDnsRecord({...input,dryRun},options(fetch)),/incomplete across pages/);
+    assert.ok(calls.every(call => call.init.method === undefined));
+  }
+});
+

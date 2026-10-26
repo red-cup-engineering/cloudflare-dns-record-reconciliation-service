@@ -16,10 +16,17 @@ from stdin and emits a non-secret JSON receipt.
 
 Set `dryRun: true` on that same request to read the exact zone and matching
 record without making any mutating request. Its receipt has `disposition:
-"planned"`, an `action` of `create`, `update`, `remove` or `none`, and the
+"planned"`, an `action` of `create`, `update`, `remove`, `none` or `blocked`, and the
 observed `before` record (or `null` when absent). Token dry runs accept the
 explicit `dns:read` scope; actual reconciliation still requires `dns:write`.
 Named profile inspection retains its original authentication requirements.
+
+The read includes every record type at the exact name. A CNAME conflicting
+with an A or AAAA record, or an A/AAAA mapping conflicting with a CNAME, has
+`action: "blocked"` and compact observed records in `conflicts`. Applying
+that mapping refuses; the service never removes a conflicting record
+implicitly. A paginated record collection also refuses instead of accepting
+an incomplete observation. Other record types retain their existing behavior.
 
 After accepting a plan, pass its `before` as `expectedRecord` with the original
 mapping to apply. A different record ID, value, type, name, proxy setting or TTL
