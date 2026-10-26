@@ -89,3 +89,97 @@ test("authentication carrying both profile and token refuses", async () => {
     TypeError
   );
 });
+
+test("dry runs plan create, update, removal and no change without any writes", async () => {
+  for (const [request, records, action] of [
+    [input, [], "create"],
+    [input, [{id:"old",...input.mapping,content:"old.example"}], "update"],
+    [input, [{id:"exact",...input.mapping}], "none"],
+    [absentInput, [{id:"existing",...input.mapping}], "remove"],
+    [absentInput, [], "none"]
+  ]) {
+    const transport = fixture(records);
+    const receipt = await reconcileCloudflareDnsRecord({...request,dryRun:true},options(transport.fetch));
+    assert.equal(receipt.disposition,"planned");
+    assert.equal(receipt.action,action);
+    assert.equal(receipt.dryRun,true);
+    assert.equal(receipt.before?.id ?? null,records[0]?.id ?? null);
+    assert.equal(transport.calls.length,2);
+    assert.ok(transport.calls.every(call => call.init.method === undefined));
+  }
+});
+
+test("token dry run accepts read authority without loading the keyring provider", async () => {
+  process.env[TEST_ENVIRONMENT_VARIABLE] = "private-dns-test-token";
+  try {
+    const transport=fixture();
+    const request={...input,dryRun:true,authentication:{...tokenAuthentication,scopes:["dns:read"]}};
+    const receipt=await reconcileCloudflareDnsRecord(request,{fetch:transport.fetch});
+    assert.equal(receipt.action,"create");
+    assert.equal(receipt.inspection.mode,"environment-token");
+    assert.ok(!JSON.stringify(receipt).includes(process.env[TEST_ENVIRONMENT_VARIABLE]));
+    const reads=transport.calls.length;
+    await assert.rejects(reconcileCloudflareDnsRecord({...request,dryRun:false},{fetch:transport.fetch}),/dns:write/);
+    assert.equal(transport.calls.length,reads);
+  } finally { delete process.env[TEST_ENVIRONMENT_VARIABLE]; }
+});
+
+test("accepted plans refuse stale records and lost absence before mutation", async () => {
+  const old={id:"old",...input.mapping,content:"old.example"};
+  const plan=await reconcileCloudflareDnsRecord({...input,dryRun:true},options(fixture([old]).fetch));
+  for (const records of [[],[{...old,id:"replacement"}],[{...old,content:"changed.example"}]]) {
+    const transport=fixture(records);
+    await assert.rejects(reconcileCloudflareDnsRecord({...input,expectedRecord:plan.before},options(transport.fetch)),/changed since/);
+    assert.ok(transport.calls.every(call => call.init.method === undefined));
+  }
+  const created=fixture([old]);
+  await assert.rejects(reconcileCloudflareDnsRecord({...input,expectedRecord:null},options(created.fetch)),/changed since/);
+  assert.ok(created.calls.every(call => call.init.method === undefined));
+  const unchanged=fixture([old]);
+  const applied=await reconcileCloudflareDnsRecord({...input,expectedRecord:plan.before},options(unchanged.fetch));
+  assert.equal(applied.disposition,"updated");
+  assert.equal(unchanged.calls.filter(call => call.init.method === "PUT").length,1);
+});
+
+test("invalid dry runs and suffix-lookalike zones refuse before transport", async () => {
+  const transport=fixture();
+  await assert.rejects(reconcileCloudflareDnsRecord({...input,dryRun:"true"},options(transport.fetch)),/dryRun/);
+  await assert.rejects(reconcileCloudflareDnsRecord({...input,mapping:{...input.mapping,name:"app.notexample.test"}},options(transport.fetch)),/mapping name/);
+  assert.equal(transport.calls.length,0);
+});
+
+test("an unreadable record collection cannot become an absence or create plan", async () => {
+  for (const dryRun of [true,false]) {
+    const transport=fixture({unexpected:"record-shape"});
+    await assert.rejects(reconcileCloudflareDnsRecord({...input,dryRun},options(transport.fetch)),/not an array/);
+    assert.ok(transport.calls.every(call => call.init.method === undefined));
+  }
+});
+
+test("an environment token binds a supplied account before reading or changing records", async () => {
+  process.env[TEST_ENVIRONMENT_VARIABLE] = "account-bound-test-token";
+  try {
+    const expectedAccountId = "0123456789abcdef0123456789abcdef";
+    for (const dryRun of [true,false]) {
+      const request = {...tokenInput,dryRun,authentication:{...tokenAuthentication,expectedAccountId}};
+      for (const account of [undefined,{id:"fedcba9876543210fedcba9876543210"}]) {
+        const calls=[];
+        const fetch = async(url) => { calls.push(url); return response([{id:"zone",name:"example.test",account}]); };
+        await assert.rejects(reconcileCloudflareDnsRecord(request,{fetch}),/expected account/);
+        assert.equal(calls.length,1);
+      }
+      const transport=fixture();
+      const fetch = (url,init) => url.endsWith("/zones?name=example.test")
+        ? Promise.resolve(response([{id:"zone",name:"example.test",account:{id:expectedAccountId}}]))
+        : transport.fetch(url,init);
+      const receipt=await reconcileCloudflareDnsRecord(request,{fetch});
+      assert.equal(receipt.disposition,dryRun ? "planned" : "unchanged");
+      assert.equal(transport.calls.length,1);
+    }
+    let called=false;
+    await assert.rejects(reconcileCloudflareDnsRecord({...tokenInput,authentication:{...tokenAuthentication,expectedAccountId:"bad-id"}},
+      {fetch:async()=>{called=true;}}),/32-character/);
+    assert.equal(called,false);
+  } finally { delete process.env[TEST_ENVIRONMENT_VARIABLE]; }
+});
+
