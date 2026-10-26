@@ -1,6 +1,6 @@
 {
   "name": "@red-cup-engineering/cloudflare-dns-record-reconciliation-service",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Reconciles one explicitly declared Cloudflare DNS record through a verified named profile.",
   "repository": {
@@ -33,3 +33,4 @@
     "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   }
 }
+
